@@ -1,0 +1,502 @@
+---
+title: "Analysis of LUSC, APOBEC, and NFE2L2"
+author: "Vincent L. Cannataro, Ph.D."
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r packages, message=F,warning=F}
+library(tidyverse)
+library(cancereffectsizeR) # v2.2.0
+
+library(GenomeInfoDb)
+ucsc_info = readRDS("input_data/hg19_ucsc_seqinfo_for_GenomeInfoDb.rds")
+ncbi_info = readRDS("input_data/hg19_ncbi_seqinfo_for_GenomeInfoDb.rds")
+assign('hg19', ucsc_info, envir = get(".UCSC_cached_chrom_info", envir = asNamespace('GenomeInfoDb')))
+assign('GCF_000001405.25', ncbi_info, envir = get(".NCBI_cached_chrom_info", envir = asNamespace('GenomeInfoDb')))
+library(ces.refset.hg19)
+```
+
+
+```{r effect_size_analysis, message=F,warning=F}
+# not running every time, rerun when input data changes
+source("R/effect_size_analysis.R")
+```
+
+```{r load_effect_size_analysis}
+# load in analysis from sourced script above
+
+analysis <- cancereffectsizeR::load_cesa(file = "output_data/LUSC_APOBEC_NFE2L2_cesa.rds")
+nrsi_analysis <- readRDS(file = "output_data/LUSC_APOBEC_NFE2L2_nrsi_analysis.rds")
+```
+
+
+There are `r length(unique(analysis$maf$Unique_Patient_Identifier))` LUSC tumors in the dataset.
+
+```{r}
+
+total_nrsi <- nrsi_analysis %>%
+  dplyr::select(variant,ends_with("_nrsi")) %>% 
+  pivot_longer(-variant) %>%
+  group_by(variant,name) %>%
+  summarize(total_nrsi = sum(value))
+
+colnames(total_nrsi)[which(colnames(total_nrsi) == "name")] <- "signature"
+
+library(ggrepel)
+
+
+total_nrsi <- total_nrsi %>%
+  mutate(variant_name = stringr::str_replace(string = variant, pattern = "_ENSP[:digit:]+",replacement = ""))
+
+```
+
+
+```{r getting coding data, warning=F, message=F}
+my_aac_muts <- as.character(as.matrix(unique(total_nrsi[str_detect(total_nrsi$variant_name,pattern ="NFE2L2"),"variant_name"])))
+
+variants <- cancereffectsizeR::select_variants(cesa = analysis, variant_passlist = my_aac_muts, include_subvariants = T)
+snvs <-  variants[variant_type == "snv"]
+
+
+```
+# NFE2L2 variants and their associated mutations 
+
+
+```{r NFE2L2 variants and their associated mutations, warning=F, message=F}
+
+snvs %>%
+  mutate(variant_name = stringr::str_replace(string = all_aac, pattern = "_ENSP[:digit:]+",replacement = "")) %>%
+  dplyr::select(variant_name,variant_id,trinuc_mut,maf_frequency) %>%
+  plyr::rename( c("maf_frequency" = "total tumors with variant")) %>%
+  arrange(desc(variant_id)) %>%
+  DT::datatable(caption = "NFE2L2 variants and their context")
+
+```
+
+# NFE2L2 mutation context
+
+```{r strand information}
+# Positive strand, 5’ to 3':
+#   25-letter "DNAString" instance
+# seq: TCAAATACTTCTCGACTTACTCCAA
+# snvs
+library(BSgenome.Hsapiens.UCSC.hg19)
+
+getSeq(Hsapiens, "chr2", start = 178098940 , end = 178098950)
+
+getSeq(Hsapiens, "chr2", start = 178098940 , end = 178098950,strand="-")
+
+```
+
+```
++ strand 5' --> 3'
+TTCT`C`GACTTA this `C` is mutated in the R34P variant
+
+- strand 5' --> 3'
+TAAGT`C`GAGAA this `C` is mutated in the R34G variant
+```
+
+
+```{r}
+nrsi_analysis %>%
+  dplyr::select(variant,Unique_Patient_Identifier,ends_with("_flux")) %>% 
+  mutate(variant_name = stringr::str_replace(string = variant, pattern = "_ENSP[:digit:]+",replacement = "")) %>%
+  dplyr::select(-variant) %>%
+  dplyr::select(variant_name,everything()) %>%
+  filter(variant_name %in% c("NFE2L2_R34P","NFE2L2_R34G")) %>%
+  mutate_if(is.numeric,round,digits=3) %>%
+  DT::datatable(caption = "Relative probability variant came from each signature per tumor")
+
+
+```
+
+
+# Per-tumor contributions
+
+```{r per variant}
+nrsi_per_variant <- nrsi_analysis %>%
+  dplyr::select(variant,Unique_Patient_Identifier,ends_with("_nrsi")) %>% 
+  mutate(variant_name = stringr::str_replace(string = variant, pattern = "_ENSP[:digit:]+",replacement = "")) %>%
+  dplyr::select(-variant) %>%
+  dplyr::select(variant_name, Unique_Patient_Identifier,everything()) %>%
+  pivot_longer(cols = -c(1,2),names_to = "signature",values_to="nrsi") %>%
+  group_by(Unique_Patient_Identifier) %>%
+  mutate(nrsi_per_tumor = nrsi/sum(nrsi)) %>%
+  group_by(variant_name,signature) %>% 
+  summarize(total_nrsi = sum(nrsi_per_tumor))
+
+
+nrsi_per_variant  %>% 
+  filter(signature %in% c("SBS2_nrsi","SBS13_nrsi")) %>%
+  arrange(desc(total_nrsi)) %>%
+  mutate(total_nrsi = round(total_nrsi,1)) %>%
+  DT::datatable(caption = "`Net realized` data for APOBEC signatures")
+
+```
+
+
+
+# Plots
+
+
+
+```{r calculate-mutational_weights}
+
+analysis$mutational_signatures$relative_biological %>% 
+  dplyr::select(-ends_with("snvs")) %>% 
+  dplyr::select(-group_avg_blended) %>% 
+  pivot_longer(cols = starts_with("SBS"), names_to = "signature", values_to = "weight") %>% 
+  group_by(Unique_Patient_Identifier) %>% 
+  mutate(prop_weight = weight / sum(weight)) -> 
+  mutational_weights
+
+
+```
+
+```{r calculate-nrsi_weights}
+
+nrsi_analysis %>% 
+  dplyr::select(-ends_with("flux")) %>% 
+  pivot_longer(cols = ends_with("nrsi"), names_to = "signature", values_to = "nrsi_weight") %>% 
+  group_by(Unique_Patient_Identifier) %>% 
+  mutate(prop_nrsi_weight = nrsi_weight / sum(nrsi_weight)) -> 
+  nrsi_weights
+
+
+
+nrsi_weights_summed_per_tumor <- nrsi_weights %>% 
+  group_by(Unique_Patient_Identifier, signature) %>%
+  summarize(signature_prop_nrsi_weight = sum(prop_nrsi_weight)) %>% 
+  mutate(signature = stringr::str_replace(string = signature, pattern = "_nrsi",replacement = ""))
+
+
+```
+
+
+
+```{r combine-weights_and_nrsi}
+left_join(mutational_weights,nrsi_weights_summed_per_tumor) %>% 
+  filter(!is.na(signature_prop_nrsi_weight)) -> 
+  mut_weight_v_nrsi
+```
+
+
+
+
+## Figure 1: mutational weights
+
+```{r figure_1_setup}
+
+et_df <- ces.refset.hg19::ces.refset.hg19$signatures$COSMIC_v3.2$meta 
+
+
+analysis$mutational_signatures$relative_biological %>% 
+  dplyr::select(-ends_with("snvs")) %>% 
+  dplyr::select(-group_avg_blended) %>% 
+  pivot_longer(cols = starts_with("SBS"), names_to = "signature",values_to = "weight") %>% 
+  # group_by(Unique_Patient_Identifier) %>% 
+  # mutate(weight_prop = weight / sum(weight)) %>% 
+  ungroup() %>% 
+  mutate(sig_just_num = stringr::str_replace(string = signature, pattern = "SBS",replacement = "")) %>% 
+  left_join(et_df, by = c("signature" = "Signature")) %>%
+  mutate(sig_w_num = paste0(Etiology, " (",sig_just_num,")"))-> 
+  weight_df
+
+
+weight_df %>% 
+  group_by(sig_w_num) %>% 
+  summarize(mean_sig = mean(weight)) %>% 
+  arrange(desc(mean_sig)) %>% 
+  filter(mean_sig > 0) -> 
+  mean_sig_df
+
+weight_df$sig_w_num <- factor(weight_df$sig_w_num, levels = rev(mean_sig_df$sig_w_num))
+
+
+
+# ces.refset.hg19::ces.refset.hg19$signatures$COSMIC_v3.2$meta %>% count(Etiology) %>%
+  # arrange(desc(n))
+
+# weight_prop_df <- weight_prop_df %>%
+  
+weight_df %>%
+  mutate(APOBEC_sig = case_when(
+    sig_just_num %in% c("2","13") ~ "APOBEC", 
+    TRUE ~ "not APOBEC")
+  ) -> 
+  weight_df
+
+apobec_br_cols <- setNames(nm = c("APOBEC","not APOBEC"), object= c("red","black"))
+
+
+sig_labels = setNames(nm = levels(weight_df$sig_w_num), object = levels(weight_df$sig_w_num))
+
+sig_labels["Defective homologous recombination DNA damage repair (3)"] <- 
+  "Defective homologous recombination\nDNA damage repair (3)"
+
+sig_labels["Deficiency in base excision repair due to mutations in NTHL1 (30)"] <- 
+  "Deficiency in base excision repair\ndue to mutations in NTHL1 (30)"
+
+sig_labels["Spontaneous deamination of 5-methylcytosine (1)"] <- 
+  "Spontaneous deamination of\n5-methylcytosine (1)"
+
+
+```
+
+```{r}
+weight_df %>%
+  filter(!is.na(sig_w_num)) %>% 
+  ggplot(aes(y=sig_w_num, x=weight,color = APOBEC_sig)) + 
+  geom_boxplot(outlier.shape = NA) + 
+  geom_jitter(height = .1,alpha=0.2) + 
+  scale_color_manual(values = apobec_br_cols) + 
+  scale_y_discrete(labels = sig_labels) + 
+  theme_bw() +
+  theme(legend.position = "none") +  
+  labs(y="Signature (COSMIC number)", x="Signature weight") 
+
+# + 
+  # theme(panel.grid.major.y = element_blank())
+
+ggsave("output_data/fig1_all_signatures_contribution_LUSC.png",width = 8,height = 5)
+```
+
+
+```{r sig2_13_weight}
+
+et_df <- ces.refset.hg19::ces.refset.hg19$signatures$COSMIC_v3.2$meta 
+
+
+analysis$mutational_signatures$relative_biological %>% 
+  dplyr::select(-ends_with("snvs")) %>% 
+  dplyr::select(-group_avg_blended) %>% 
+  pivot_longer(cols = starts_with("SBS"), names_to = "signature",values_to = "weight") %>%
+  mutate(apo = case_when(
+    signature %in% c("SBS2","SBS13") ~ "apo",
+    TRUE ~ signature)) %>% 
+  group_by(Unique_Patient_Identifier,apo) %>% 
+  summarize(weight_tot = sum(weight)) %>% 
+  ungroup() %>% 
+  mutate(sig_just_num = stringr::str_replace(string = apo, pattern = "SBS",replacement = "")) -> 
+  weight_tot_df
+
+
+weight_tot_df %>% 
+  group_by(sig_just_num) %>% 
+  summarize(mean_sig = mean(weight_tot)) %>% 
+  arrange(desc(mean_sig)) %>% 
+  filter(mean_sig > 0) -> 
+  mean_sig_df
+
+mean_sig_df
+
+```
+
+
+
+
+## Figure 2: effect size
+
+```{r figure_2}
+
+et_df <- ces.refset.hg19::ces.refset.hg19$signatures$COSMIC_v3.2$meta 
+
+et_df <- et_df %>% 
+  mutate(sig_just_num = str_remove(string = Signature, pattern = "SBS"))
+
+nrsi_analysis %>% 
+  dplyr::select(-ends_with("flux")) %>% 
+  pivot_longer(starts_with("SBS"),names_to = "signature",values_to = "nrsi_weight") %>% 
+  group_by(Unique_Patient_Identifier) %>%
+  mutate(nrsi_prop_weight = nrsi_weight / sum(nrsi_weight)) %>% 
+  ungroup() %>% 
+  mutate(signature = str_remove(string = signature,pattern = "_nrsi")) %>%
+  mutate(signature = str_remove(string = signature,pattern = "SBS")) %>%
+  left_join(et_df, by = c("signature" = "sig_just_num")) %>%
+  mutate(sig_w_num = paste0(Etiology, " (",signature,")")) -> 
+  nrsi_analysis_nrsi_long
+
+nrsi_analysis_nrsi_long %>% 
+  group_by(Unique_Patient_Identifier,sig_w_num) %>%
+  summarize(total_prop_weight = sum(nrsi_prop_weight)) %>%
+  group_by(sig_w_num) %>% 
+  summarize(mean_weight = mean(total_prop_weight)) %>% 
+  arrange(desc(mean_weight)) %>% 
+  pull(sig_w_num) -> 
+  sig_order
+
+
+
+nrsi_analysis_nrsi_long$sig_w_num <- factor(nrsi_analysis_nrsi_long$sig_w_num, levels = rev(sig_order))
+
+nrsi_analysis_nrsi_long %>%
+  mutate(APOBEC_sig = case_when(
+    signature %in% c("2","13") ~ "APOBEC", 
+    TRUE ~ "not APOBEC")
+  ) -> 
+  nrsi_analysis_nrsi_long
+
+nrsi_analysis_nrsi_long %>%
+  group_by(Unique_Patient_Identifier,sig_w_num, APOBEC_sig) %>%
+  summarize(total_prop_weight = sum(nrsi_prop_weight)) %>%
+  # filter(signature %in% c("5","2","3","4","13","40")) %>%
+  ggplot(aes(y=sig_w_num, x=total_prop_weight, color = APOBEC_sig)) + 
+  geom_boxplot(outlier.shape = NA) + 
+  geom_jitter(height = .1,alpha=0.2) + 
+  scale_color_manual(values = apobec_br_cols) + 
+  theme_bw() + 
+  theme(legend.position = "none") + 
+  labs(x="Relative attributable effect size", y="Signature (COSMIC number)") + 
+  scale_y_discrete(labels = sig_labels) 
+
+# + 
+#   theme(panel.grid.major.y = element_blank())
+
+ggsave("output_data/fig2_relative_attributable_effect_sizeLUSC.png",width = 8,height = 5)
+
+```
+
+## Figure 3: Variant relative effect size
+
+```{r calculate-nrsi_2_13_others_pertumor, fig.height=5, fig.width=7}
+nrsi_analysis %>% 
+  mutate(variant_name = stringr::str_replace(string = variant, pattern = "_ENSP[:digit:]+",replacement = "")) %>% 
+  dplyr::select(variant_name,Unique_Patient_Identifier,ends_with("nrsi")) %>% 
+  pivot_longer(cols = ends_with("nrsi"), names_to = "signature",values_to = "nrsi") %>%
+  group_by(Unique_Patient_Identifier) %>% 
+  mutate(nrsi_per_tumor = nrsi/sum(nrsi)) %>% 
+  mutate(sig_short = str_remove(string = signature,pattern = "SBS")) %>% 
+  mutate(sig_short = str_remove(string = sig_short,pattern = "_nrsi")) %>% 
+  filter(sig_short %in% c("5","4","3","13","40","2")) %>% 
+  group_by(variant_name,sig_short) %>%
+  summarize(total_scaled_nrsi = sum(nrsi_per_tumor)) -> 
+  nrsi_top_sigs
+
+et_df <- ces.refset.hg19::ces.refset.hg19$signatures$COSMIC_v3.2$meta 
+
+et_df <- et_df %>% 
+  mutate(sig_just_num = str_remove(string = Signature, pattern = "SBS")) %>%
+  mutate(et_and_num = paste0(Etiology, " (", sig_just_num,")"))
+
+
+nrsi_top_sigs %>% 
+  left_join(et_df, by = c("sig_short" = "sig_just_num")) -> 
+  nrsi_top_sigs
+
+
+
+
+nrsi_top_sigs %>% 
+  group_by(et_and_num) %>% 
+  slice_max(order_by = total_scaled_nrsi,n = 1) %>% 
+  arrange(desc(total_scaled_nrsi)) %>% 
+  pull(et_and_num) -> 
+  sig_order_nrsi_all
+
+
+
+nrsi_top_sigs$et_and_num <- factor(nrsi_top_sigs$et_and_num, levels= rev(sig_order_nrsi_all))
+
+
+
+nrsi_top_sigs %>% 
+  mutate(first_let = stringr::str_sub(variant_name,start = 1,end=1)) %>% 
+  filter(stringr::str_starts(string = first_let, pattern = "[:alpha:]")) %>% 
+  pull(variant_name) -> 
+  aac_variants
+
+
+nrsi_top_sigs %>% 
+  ggplot(aes(x=total_scaled_nrsi,y=sig_short)) + 
+  geom_point(alpha=0.2) + 
+  theme_bw() + 
+  labs(x="Total proportional attributable effect size per variant", y="Signature") + 
+  geom_text_repel(data = 
+             nrsi_top_sigs %>% 
+               filter(
+                 variant_name %in% aac_variants & (
+                 (sig_short == "4" & 
+                         total_scaled_nrsi > 4)  |
+                        (sig_short == "2" & 
+                         total_scaled_nrsi > 1) | 
+                        (sig_short == "5" & 
+                         total_scaled_nrsi > 2) | 
+                        (sig_short == "13" & 
+                         total_scaled_nrsi > 1) | 
+                        (sig_short == "40" & 
+                         total_scaled_nrsi > 1) |
+                        (sig_short == "3" & 
+                         total_scaled_nrsi > 1.5)
+               )), aes(label=variant_name),max.overlaps = 50)
+
+
+ggsave(filename = "output_data/sbs_2_13_other_nrsi_summed.png",height = 5,width = 8)
+
+```
+
+
+```{r}
+
+nrsi_top_sigs %>%
+  mutate(APOBEC_sig = case_when(
+    sig_short %in% c("2","13") ~ "APOBEC", 
+    TRUE ~ "not APOBEC")
+  ) -> 
+  nrsi_top_sigs
+
+apobec_br_cols <- purrr::set_names(nm = c("APOBEC","not APOBEC"),x = c("red","black"))
+
+```
+
+
+```{r fig3}
+
+nrsi_top_sigs %>% 
+  mutate(variant_name_sp = str_replace(string = variant_name, pattern = "_", replacement = " ")) -> 
+  nrsi_top_sigs
+
+nrsi_top_sigs %>% 
+  ggplot(aes(x=total_scaled_nrsi,y=et_and_num,color=APOBEC_sig)) + 
+  scale_color_manual(values=apobec_br_cols) + 
+  geom_point(alpha=0.2) + 
+  theme_bw() + 
+  theme(legend.position = "none") + 
+  labs(x="Total proportional attributable effect size per variant", y="Signature") + 
+  geom_label_repel(data = 
+             nrsi_top_sigs %>% 
+               filter(
+                 variant_name %in% aac_variants & (
+                 (sig_short == "4" & 
+                         total_scaled_nrsi > 4)  |
+                        (sig_short == "2" & 
+                         total_scaled_nrsi > 1) | 
+                        (sig_short == "5" & 
+                         total_scaled_nrsi > 2.7) | 
+                        (sig_short == "13" & 
+                         total_scaled_nrsi > 1.1) | 
+                        (sig_short == "40" & 
+                         total_scaled_nrsi > 1.2) |
+                        (sig_short == "3" & 
+                         total_scaled_nrsi > 1.5)
+               )), aes(label=variant_name_sp),max.overlaps = 25,label.size = .1,force = 2) + 
+  theme(panel.grid.major.y = element_blank()) + 
+  scale_y_discrete(labels = sig_labels)
+
+
+ggsave(filename = "output_data/fig3_sbs_2_13_other_nrsi_summed.png",height = 5,width = 8)
+
+```
+
+
+
