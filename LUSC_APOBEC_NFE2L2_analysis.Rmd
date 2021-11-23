@@ -17,7 +17,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r packages, message=F,warning=F}
 library(tidyverse)
-library(cancereffectsizeR) # v2.2.0
+library(cancereffectsizeR) # v2.3.3
 
 library(GenomeInfoDb)
 ucsc_info = readRDS("input_data/hg19_ucsc_seqinfo_for_GenomeInfoDb.rds")
@@ -65,21 +65,21 @@ total_nrsi <- total_nrsi %>%
 ```{r getting coding data, warning=F, message=F}
 my_aac_muts <- as.character(as.matrix(unique(total_nrsi[str_detect(total_nrsi$variant_name,pattern ="NFE2L2"),"variant_name"])))
 
-variants <- cancereffectsizeR::select_variants(cesa = analysis, variant_passlist = my_aac_muts, include_subvariants = T)
+variants <- cancereffectsizeR::select_variants(cesa = analysis, variant_ids  = my_aac_muts, include_subvariants = T)
 snvs <-  variants[variant_type == "snv"]
 
-
+trinuc_data <- left_join(variants %>% unnest(constituent_snvs), snvs, by = c("constituent_snvs" = "variant_name"))
 ```
 # NFE2L2 variants and their associated mutations 
 
 
 ```{r NFE2L2 variants and their associated mutations, warning=F, message=F}
 
-snvs %>%
-  mutate(variant_name = stringr::str_replace(string = all_aac, pattern = "_ENSP[:digit:]+",replacement = "")) %>%
-  dplyr::select(variant_name,variant_id,trinuc_mut,maf_frequency) %>%
-  plyr::rename( c("maf_frequency" = "total tumors with variant")) %>%
-  arrange(desc(variant_id)) %>%
+trinuc_data %>%
+  # mutate(variant_name = stringr::str_replace(string = variant_name, pattern = "_ENSP[:digit:]+",replacement = "")) %>%
+  dplyr::select(variant_name,constituent_snvs,trinuc_mut.y,maf_prevalence.x) %>%
+  plyr::rename( c("maf_prevalence.x" = "total tumors with variant")) %>%
+  arrange(desc(`total tumors with variant`)) %>%
   DT::datatable(caption = "NFE2L2 variants and their context")
 
 ```
@@ -153,7 +153,7 @@ nrsi_per_variant  %>%
 
 ```{r calculate-mutational_weights}
 
-analysis$mutational_signatures$relative_biological %>% 
+analysis$mutational_signatures$biological_weights %>% 
   dplyr::select(-ends_with("snvs")) %>% 
   dplyr::select(-group_avg_blended) %>% 
   pivot_longer(cols = starts_with("SBS"), names_to = "signature", values_to = "weight") %>% 
@@ -201,7 +201,7 @@ left_join(mutational_weights,nrsi_weights_summed_per_tumor) %>%
 et_df <- ces.refset.hg19::ces.refset.hg19$signatures$COSMIC_v3.2$meta 
 
 
-analysis$mutational_signatures$relative_biological %>% 
+analysis$mutational_signatures$biological_weights %>% 
   dplyr::select(-ends_with("snvs")) %>% 
   dplyr::select(-group_avg_blended) %>% 
   pivot_longer(cols = starts_with("SBS"), names_to = "signature",values_to = "weight") %>% 
@@ -270,6 +270,7 @@ weight_df %>%
   # theme(panel.grid.major.y = element_blank())
 
 ggsave("output_data/fig1_all_signatures_contribution_LUSC.png",width = 8,height = 5)
+ggsave("output_data/fig1_all_signatures_contribution_LUSC.eps",width = 8,height = 5,device = cairo_ps)
 ```
 
 
@@ -278,7 +279,7 @@ ggsave("output_data/fig1_all_signatures_contribution_LUSC.png",width = 8,height 
 et_df <- ces.refset.hg19::ces.refset.hg19$signatures$COSMIC_v3.2$meta 
 
 
-analysis$mutational_signatures$relative_biological %>% 
+analysis$mutational_signatures$biological_weights %>% 
   dplyr::select(-ends_with("snvs")) %>% 
   dplyr::select(-group_avg_blended) %>% 
   pivot_longer(cols = starts_with("SBS"), names_to = "signature",values_to = "weight") %>%
@@ -364,6 +365,7 @@ nrsi_analysis_nrsi_long %>%
 #   theme(panel.grid.major.y = element_blank())
 
 ggsave("output_data/fig2_relative_attributable_effect_sizeLUSC.png",width = 8,height = 5)
+ggsave("output_data/fig2_relative_attributable_effect_sizeLUSC.eps",width = 8,height = 5,device = cairo_ps)
 
 ```
 
@@ -495,6 +497,7 @@ nrsi_top_sigs %>%
 
 
 ggsave(filename = "output_data/fig3_sbs_2_13_other_nrsi_summed.png",height = 5,width = 8)
+ggsave(filename = "output_data/fig3_sbs_2_13_other_nrsi_summed.eps",height = 5,width = 8,device = cairo_ps)
 
 ```
 

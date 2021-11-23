@@ -3,7 +3,7 @@
 
 
 library(tidyverse)
-library(cancereffectsizeR) # v2.2.0
+library(cancereffectsizeR) # v2.3.3
 library(ces.refset.hg19)
 
 
@@ -41,8 +41,8 @@ analysis <- cancereffectsizeR::load_maf(cesa = analysis, maf = LUSC_alldata)
 analysis <- 
   cancereffectsizeR::trinuc_mutation_rates(cesa = analysis,
                                            signature_set = "COSMIC_v3.1",
-                                           signatures_to_remove = 
-                                             c(cancereffectsizeR::suggest_cosmic_signatures_to_remove(cancer_type = "LUSC",
+                                           signature_exclusions = 
+                                             c(cancereffectsizeR::suggest_cosmic_signature_exclusions(cancer_type = "LUSC",
                                                                                                       treatment_naive = T,quiet = T),"SBS89"),
                                            cores = 10,signature_extractor = "deconstructSigs")
 

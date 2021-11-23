@@ -32,14 +32,30 @@ population_scaled_effect_per_tumor <- function(ces_output, run_name = NULL, min_
   }
   
   # Get signature definition matrix (rows = signature names, columns = relative rates of trinuc-context-specific SNVs)
-  signature_defs = ces_output$reference_data$snv_signatures$signatures
+  # Pre-2.3, just one set of signatures could be present
+  running_old_version = FALSE
+  if (is.data.frame(ces_output$reference_data$snv_signatures$signatures)) {
+    running_old_version = TRUE
+    signature_defs = ces_output$reference_data$snv_signatures$signatures
+  } else {
+    num_signature_sets = length(ces_output$reference_data$snv_signatures)
+    if(num_signature_sets == 0) {
+      stop("Input CESAnalysis contains no associated signature definitions.")
+    } 
+    if(num_signature_sets > 1) {
+      msg = paste0("Unusual situation: Input CESAnalysis has more than one set of associated SNV mutational signature definitions. ",
+                   "It should be possible to create equivalent analysis using just one signature set.")
+      stop(pretty_message(msg, emit = F))
+    }
+    signature_defs = ces_output$reference_data$snv_signatures[[1]]$signatures
+  }
   signature_names = rownames(signature_defs)
   
   # Get data.table with signature weights (one row per tumor)
   signature_weights = get_signature_weights(ces_output)
   if (is.null(signature_weights)) {
     stop("Can't run because no signature weights are associated with this analysis.\n",
-    "If you have them, you can add them to the CESAnalysis with set_signature_weights().")
+         "If you have them, you can add them to the CESAnalysis with set_signature_weights().")
   }
   if(nrow(signature_weights) != nrow(ces_output$samples)) {
     stop("Not all samples in CESAnalysis have assigned signature weights, so can't run.")
@@ -89,12 +105,11 @@ population_scaled_effect_per_tumor <- function(ces_output, run_name = NULL, min_
   }
   setnames(selection_data, si_col, "selection_intensity")
   
-  # MAF frequency column name will vary depending on if there are multiple CESAnalysis groups
-  if ("total_maf_freq" %in% colnames(selection_data)) {
-    selection_data = selection_data[total_maf_freq >= min_variant_freq]
-  } else {
-    selection_data = selection_data[maf_frequency >= min_variant_freq]
-  }
+  # Handle pre-2.3 prevalence column name
+  setnames(selection_data, 'total_maf_freq', 'maf_prevalence', skip_absent = T)
+  setnames(selection_data, 'maf_frequency', 'maf_prevalence', skip_absent = T)
+  setnames(selection_data, 'maf_prevalence', 'included_with_variant', skip_absent = T)                                       
+  selection_data = selection_data[included_with_variant >= min_variant_freq]
   
   message("Using variant effect data from ", selection_data[, .N], " variants...")
   
@@ -125,7 +140,7 @@ population_scaled_effect_per_tumor <- function(ces_output, run_name = NULL, min_
   
   # Collect SNV IDs: just the variant ID for SNVs; for AACs, pull information from mutation annotations
   selection_data[variant_type == "snv", snv_ids := list(list(variant_id)), by = "variant_id"]
-  selection_data[variant_type == "aac", snv_ids := constituent_snvs]
+  selection_data[variant_type == "aac", snv_ids := ces_output@mutations$amino_acid_change[variant_id, constituent_snvs, on = 'aac_id']]
   missing_aac_index = selection_data[, bad := is.null(snv_ids[[1]]), by = "variant_id"][bad == T, which = T]
   if (length(missing_aac_index) > 0) {
     missing = selection_data[missing_aac_index, variant]
@@ -138,7 +153,11 @@ population_scaled_effect_per_tumor <- function(ces_output, run_name = NULL, min_
   variant_snv_pairings = selection_data[, .(snv = unlist(snv_ids), selection_intensity), by = "variant_id"]
   
   # get trinucleotide contexts of all SNVs
-  reselected_snv = select_variants(ces_output, variant_passlist = variant_snv_pairings$snv)
+  if (running_old_version) {
+    reselected_snv = select_variants(ces_output, variant_passlist = variant_snv_pairings$snv)
+  } else {
+    reselected_snv = select_variants(ces_output, variant_ids = variant_snv_pairings$snv)
+  }
   reselected_snv = reselected_snv[variant_snv_pairings$snv, on = "variant_id", nomatch = NULL]
   
   # this shouldn't happen
