@@ -17,13 +17,13 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r packages, message=F,warning=F}
 library(tidyverse)
-library(cancereffectsizeR) # v2.3.3
+library(cancereffectsizeR) # v2.6.1
 
-library(GenomeInfoDb)
-ucsc_info = readRDS("input_data/hg19_ucsc_seqinfo_for_GenomeInfoDb.rds")
-ncbi_info = readRDS("input_data/hg19_ncbi_seqinfo_for_GenomeInfoDb.rds")
-assign('hg19', ucsc_info, envir = get(".UCSC_cached_chrom_info", envir = asNamespace('GenomeInfoDb')))
-assign('GCF_000001405.25', ncbi_info, envir = get(".NCBI_cached_chrom_info", envir = asNamespace('GenomeInfoDb')))
+# library(GenomeInfoDb)
+# ucsc_info = readRDS("input_data/hg19_ucsc_seqinfo_for_GenomeInfoDb.rds")
+# ncbi_info = readRDS("input_data/hg19_ncbi_seqinfo_for_GenomeInfoDb.rds")
+# assign('hg19', ucsc_info, envir = get(".UCSC_cached_chrom_info", envir = asNamespace('GenomeInfoDb')))
+# assign('GCF_000001405.25', ncbi_info, envir = get(".NCBI_cached_chrom_info", envir = asNamespace('GenomeInfoDb')))
 library(ces.refset.hg19)
 ```
 
